@@ -10,14 +10,16 @@ from rest_framework.parsers import MultiPartParser
 import os
 import shutil
 import moviepy.editor as mp
+import cv2
+from moviepy.video.fx.all import crop
 # Create your views here.
 def simple(path,name,time,size=(720, 1280)):
-    clip1 =  mp.ImageClip(path).set_fps(24).set_duration(time).resize(size)
+    clip1 =  mp.ImageClip(path).set_fps(25).set_duration(time).resize(size)
     clip1.write_videofile(f"{name}.mp4")
     return f"{name}.mp4"
 def zoomIn(path,name,time,size=(720, 1280)):
     rad=0.11*4/time
-    slide = mp.ImageClip(path).set_fps(24).set_duration(time).resize(size)
+    slide = mp.ImageClip(path).set_fps(25).set_duration(time).resize(size)
     slide = slide.resize(lambda t: 1 + rad * t)  # + for Zoom-in effect /- for Zoom-out
     slide = slide.set_position(('center', 'center'))
     slide = mp.CompositeVideoClip([slide], size=size)
@@ -25,7 +27,7 @@ def zoomIn(path,name,time,size=(720, 1280)):
     return f"{name}.mp4"
 def zoomOut(path,name,time):
     rad=0.13*4/time
-    slide = mp.ImageClip(path).set_fps(24).set_duration(time).resize((1080, 1920))
+    slide = mp.ImageClip(path).set_fps(25).set_duration(time).resize((1080, 1920))
     slide = slide.resize(lambda t: 1 / (1 + rad * t))  # + for Zoom-in effect /- for Zoom-out
     slide = slide.set_position(('center', 'center'))
     slide = mp.CompositeVideoClip([slide], size=(720, 1280))
@@ -55,51 +57,119 @@ def resize(path):
 def cropVideo(videopath,time,path,i):
     # loading video dsa gfg intro video 
     clip = mp.VideoFileClip(videopath)
-    crop=True
-    X1=0
-    X2=clip.w
-    Y1=0
-    Y2=clip.h
-    if clip.w==720 and clip.h==1280:
-        crop=False
-    elif clip.w*1.77777777778>clip.h:
-        a=clip.h/1280
-        b=720*a
-        c=abs(clip.w-b)
-        d=c/2
-        X1=int(d)
-        X2=int(b+X1)
-    elif clip.w*1.77777777778<clip.h:
-        a=clip.w/720
-        b=1280*a
-        c=abs(clip.h-b)
-        d=c/2
-        Y1=int(d)
-        Y2=int(b+Y1)
-    else:
-        crop=False
-        if clip.duration > time:
-            clip = clip.subclip(0, time)
-        final=clip
-    if crop:
-        if clip.duration > time:
-            clip = clip.subclip(0, time)
-        final=clip.crop(x1=X1, y1=Y1,x2=X2, y2=Y2)
-    newPath=f'{path}/new{i}.mp4'
-    final.write_videofile(newPath)
+    newPath=f'{path}/{i}.mp4'
+    print(f"crop   ==================== time = {time}")
+    clip = mp.VideoFileClip(videopath).subclip((0,00.00),(0,time)).resize(height=1280)
+    if(clip.w<720):
+        clip = mp.VideoFileClip(videopath).subclip((0,00.00),(0,time)).resize(width=720)
+    (w, h) = clip.size
+    cropped_clip = crop(clip, width=720, height=1280, x_center=w/2, y_center=h/2)
+    cropped_clip.write_videofile(newPath, codec="libx264")
     return newPath
+def mergeVideosCV(data,music,path_name):
+    frames = []
+    for video_file in data:
+        # Open the video file
+        cap = cv2.VideoCapture(video_file)
+
+        while True:
+            # Read the frame
+            ret, frame = cap.read()
+
+            if not ret:
+                break
+
+            # Append the frame to the list
+            frames.append(frame)
+
+        # Release the video capture object
+        cap.release()
+
+    # Write the concatenated video
+    out = cv2.VideoWriter(path_name, cv2.VideoWriter_fourcc(*'mp4v'), 25, (720, 1280))
+    for frame in frames:
+        out.write(frame)
+    # Release the video writer object
+    out.release()
+    return path_name
+def delete_and_replace_audio(video_file, audio_file, output_file):
+    # Load the video clip
+    video_clip = mp.VideoFileClip(video_file)
+    # Load the audio clip from the other audio file
+    audio_clip = mp.AudioFileClip(f"media/{audio_file}")
+    # Remove the original audio from the video
+    video_without_audio = video_clip.without_audio()
+    # Combine the video with the new audio
+    video_with_new_audio = video_without_audio.set_audio(audio_clip)
+    # Save the final video with the new audio
+    video_with_new_audio.write_videofile(output_file, codec="libx264")
+def concatenate_videos(video_files,music, path):
+    # Initialize an empty list to store video frames
+    resize_width=720
+    resize_height=1280
+    frames = []
+    fps = 0
+
+    for video_file in video_files:
+        # Resize the video
+        resized_frames, video_fps = resize_video(video_file, resize_width, resize_height)
+
+        # Append the frames to the list
+        frames.extend(resized_frames)
+
+        # Update the fps if necessary (use the first video's fps)
+        if fps == 0:
+            fps = video_fps
+
+    # Create a VideoWriter object to save the concatenated video
+    out = cv2.VideoWriter(f"{path}/init.mp4", cv2.VideoWriter_fourcc(*'mp4v'), fps, (resize_width, resize_height))
+
+    for frame in frames:
+        out.write(frame)
+    # Release the video writer object
+    out.release()
+    final=f"{path}/final.mp4"
+    delete_and_replace_audio(f"{path}/init.mp4", music, final)
+    return final
+
+def resize_video(input_file, resize_width, resize_height):
+    # Open the input video file
+    cap = cv2.VideoCapture(input_file)
+
+    # Get the video's frames per second
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    frames = []
+    while True:
+        # Read the next frame from the video
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Resize the frame to the desired width and height
+        resized_frame = cv2.resize(frame, (resize_width, resize_height))
+
+        frames.append(resized_frame)
+
+    # Release video capture object
+    cap.release()
+
+    return frames, fps
 def mergeVideos(data,music,path_name):
     video_clips=[]
     for path in data:
+        print(path)
         clip = mp.VideoFileClip(path)
         resized_clip = clip.resize(height=1280)
         video_clips.append(resized_clip)
     merged_video = mp.concatenate_videoclips(video_clips,method='compose')
     audio = mp.AudioFileClip(f"media/{music}")
     merged_video=merged_video.without_audio()
+    print("-------------------------here ------------------")
     final_video = merged_video.set_audio(audio)
-    final_video.write_videofile(path_name, codec="libx264")
-    return path_name
+    path=f"{path_name}/final.mp4"
+    final_video.write_videofile(path, codec="libx264")
+    return path
 class viewsets_category(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
@@ -159,7 +229,8 @@ class MakeVideo(APIView):
                 video_name=f'{path}/{i}{extension}'
                 video_name=cropVideo(video_name,times[i][0],path,i)
                 self.data.append(video_name)
-        final=mergeVideos(self.data,template.music_url,f"{path}/final.mp4")
+        print("-------------concatenate-------------------------")
+        final=mergeVideos(self.data,template.music_url,path)
         return Response({f'url': f'{final}'})  
     def get(self,request):
         id=request.query_params.get('id')
